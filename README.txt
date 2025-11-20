@@ -1,8 +1,6 @@
-# Next.js PDF Allergen & Nutrition Extractor
+## Next.js PDF Allergen & Nutrition Extractor
 
-This ZIP contains an empty project structure.
 
-Please copy the code from the canvas into the respective files.
 
 ## Structure
 - pages/
