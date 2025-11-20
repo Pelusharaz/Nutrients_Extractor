@@ -1,0 +1,21 @@
+{
+  "name": "nutrients_extractor",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "formidable": "^2.1.5",
+    "multer": "^2.0.2",
+    "next": "^16.0.3",
+    "openai": "^6.9.1",
+    "pdf-img-convert": "^2.0.0",
+    "pdf-parse": "^2.4.5",
+    "pdf2pic": "^3.2.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tesseract.js": "^6.0.1"
+  }
+}
