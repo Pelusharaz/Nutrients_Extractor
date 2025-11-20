@@ -37,7 +37,7 @@ setLoading(false)
 
 return (
 <div style={{ maxWidth: 900, margin: '40px auto', fontFamily: 'Inter, system-ui' }}>
-<h1>PDF Allergen & Nutrition Extractor</h1>
+<h1>Sharaz Allergen & Nutrition Extractor</h1>
 <p>Upload a product PDF (digital or scanned). The backend will extract allergens and nutrition values.</p>
 
 
