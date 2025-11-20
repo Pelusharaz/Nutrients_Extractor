@@ -3,4 +3,5 @@ node_modules/
 tmp/
 .env
 PDF_Files/
+Documentation/
 *.log
