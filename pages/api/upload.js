@@ -124,11 +124,11 @@ import { fromPath } from "pdf2pic";
 
 export const config = { api: { bodyParser: false } };
 
-// Ensure tmp folder exists
+// Tmp folder
 const TMP_DIR = path.resolve("./tmp");
 if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
 
-// Allergens and nutrients lists
+// Allergens / Nutrients
 const ALLERGENS = ["Gluten","Egg","Crustaceans","Fish","Peanut","Soy","Milk","Tree nuts","Celery","Mustard"];
 const NUTRIENTS = ["Energy","Fat","Carbohydrate","Sugar","Protein","Sodium"];
 
@@ -136,21 +136,23 @@ const NUTRIENTS = ["Energy","Fat","Carbohydrate","Sugar","Protein","Sodium"];
 function extractInfo(text) {
   const result = { allergens: [], nutrients: {} };
   const lowerText = text.toLowerCase();
-  
+
   ALLERGENS.forEach(a => {
     if (lowerText.includes(a.toLowerCase())) result.allergens.push(a);
   });
-  
+
   NUTRIENTS.forEach(n => {
     const match = text.match(new RegExp(`${n}:\\s*([\\d.,]+)`, "i"));
     if (match) result.nutrients[n] = match[1];
   });
-  
+
   return result;
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method Not Allowed" });
+  }
 
   const form = new formidable.IncomingForm({ keepExtensions: true, uploadDir: TMP_DIR });
 
@@ -163,40 +165,63 @@ export default async function handler(req, res) {
     const filePath = file.filepath || file.path;
     if (!filePath) return res.status(400).json({ error: "File path not found" });
 
+    let extractedText = "";
+
+    // Step 1: PDF text extraction
     try {
-      const converter = fromPath(filePath, {
-        density: 150,
-        saveFilename: "tmp_page",
-        savePath: TMP_DIR,
-        format: "png",
-        width: 1240,
-        height: 1754,
-      });
-
-      // Try OCR for first 50 pages max (adjust if needed)
-      const numPages = 50;
-      let ocrText = "";
-
-      for (let i = 1; i <= numPages; i++) {
-        try {
-          const image = await converter(i);
-          const ocrResult = await Tesseract.recognize(path.resolve(image.path), "eng");
-          ocrText += "\n" + ocrResult.data.text;
-        } catch (pageErr) {
-          // If a page fails, break loop (probably last page)
-          break;
-        }
+      let pdfParse;
+      try {
+        pdfParse = (await import("pdf-parse")).default;
+      } catch (e) {
+        pdfParse = require("pdf-parse");
       }
 
-      const extractedText = ocrText.trim();
-      const parsed = extractInfo(extractedText);
-
-      return res.status(200).json(parsed);
-    } catch (error) {
-      console.error("OCR failed:", error);
-      return res.status(500).json({ error: "OCR failed", details: error.message });
+      const pdfBuffer = fs.readFileSync(filePath);
+      const data = await pdfParse(pdfBuffer);
+      if (data && data.text && data.text.trim().length > 0) {
+        extractedText = data.text.trim();
+      }
+    } catch (pdfErr) {
+      console.warn("pdf-parse failed, falling back to OCR:", pdfErr.message);
     }
+
+    // Step 2: OCR if PDF extraction failed
+    if (!extractedText || extractedText.length < 5) {
+      try {
+        const converter = fromPath(filePath, {
+          density: 150,
+          saveFilename: "tmp_page",
+          savePath: TMP_DIR,
+          format: "png",
+          width: 1240,
+          height: 1754,
+        });
+
+        // Try sequential OCR, 1 page at a time
+        let ocrText = "";
+        const MAX_PAGES = 20; // limit to avoid EPIPE
+
+        for (let i = 1; i <= MAX_PAGES; i++) {
+          try {
+            const image = await converter(i);
+            const result = await Tesseract.recognize(path.resolve(image.path), "eng");
+            ocrText += "\n" + result.data.text;
+          } catch (pageErr) {
+            console.warn(`Page ${i} failed OCR:`, pageErr.message);
+            break; // stop on first failure (probably no more pages)
+          }
+        }
+
+        extractedText = ocrText.trim();
+      } catch (ocrErr) {
+        console.error("OCR completely failed:", ocrErr.message);
+      }
+    }
+
+    // Step 3: Extract allergens / nutrients
+    const parsed = extractInfo(extractedText);
+
+    return res.status(200).json(parsed);
   });
 }
-
 

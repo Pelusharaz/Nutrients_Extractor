@@ -21,3 +21,7 @@ Run:
 ```
 npm run dev
 ```
+
+
+
+live link : https://nutrients-extractor.onrender.com/
