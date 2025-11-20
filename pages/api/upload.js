@@ -1,4 +1,110 @@
+// with rule based extraction
+
+// pages/api/upload.js
+import fs from "fs";
+import path from "path";
+import formidable from "formidable";
+import Tesseract from "tesseract.js";
+const pdfParse = require("pdf-parse");
+
+export const config = { api: { bodyParser: false } };
+
+const TMP_DIR = path.resolve("./tmp");
+if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
+
+const ALLERGENS = ["Gluten","Egg","Crustaceans","Fish","Peanut","Soy","Milk","Tree nuts","Celery","Mustard"];
+const NUTRIENTS = ["Energy","Fat","Carbohydrate","Sugar","Protein","Sodium"];
+
+function initResult() {
+  const allergens = {};
+  ALLERGENS.forEach(a => allergens[a] = { detected: false, snippet: null, confidence: 0 });
+  const nutrition = {};
+  NUTRIENTS.forEach(n => nutrition[n] = { value: null, unit: null, snippet: null });
+  return { allergens, nutrition };
+}
+
+function extractData(text) {
+  const result = initResult();
+  if (!text) return result;
+
+  const lines = text.split(/\r?\n/);
+
+  lines.forEach(line => {
+    const l = line.toLowerCase();
+
+    // Allergens
+    ALLERGENS.forEach(a => {
+      if (!result.allergens[a].detected && l.includes(a.toLowerCase())) {
+        result.allergens[a] = { detected: true, snippet: line.trim(), confidence: 1 };
+      }
+    });
+
+    // Nutrients
+    NUTRIENTS.forEach(n => {
+      if (!result.nutrition[n].value) {
+        const match = line.match(new RegExp(`${n}\\s*[:\\-]?\\s*([\\d.,]+)\\s*(kcal|g|mg)?`, "i"));
+        if (match) {
+          result.nutrition[n] = { 
+            value: match[1], 
+            unit: match[2] || "-", 
+            snippet: line.trim() 
+          };
+        }
+      }
+    });
+  });
+
+  return result;
+}
+
+export default async function handler(req, res) {
+  if (req.method !== "POST") return res.status(405).json({ error: "Method Not Allowed" });
+
+  const form = new formidable.IncomingForm({ keepExtensions: true, uploadDir: TMP_DIR });
+
+  form.parse(req, async (err, fields, files) => {
+    if (err) return res.status(500).json({ error: "File parsing failed", details: err.message });
+
+    const file = files.file;
+    if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+    const filePath = file.filepath || file.path;
+
+    let text = "";
+
+    // 1️⃣ PDF text extraction
+    try {
+      const buffer = fs.readFileSync(filePath);
+      const pdfData = await pdfParse(buffer);
+      if (pdfData && pdfData.text.trim().length > 0) {
+        text = pdfData.text.trim();
+      }
+    } catch (pdfErr) {
+      console.warn("pdf-parse failed, fallback to OCR:", pdfErr.message);
+    }
+
+    // 2️⃣ OCR fallback (directly on PDF file)
+    if (!text || text.length < 5) {
+      try {
+        const ocrResult = await Tesseract.recognize(filePath, "eng", { logger: m => console.log(m) });
+        text = ocrResult.data.text || "";
+      } catch (ocrErr) {
+        console.error("OCR failed:", ocrErr.message);
+      }
+    }
+
+    // 3️⃣ Extract allergens/nutrients
+    const parsed = extractData(text);
+
+    // 4️⃣ Always return result
+    return res.status(200).json(parsed);
+  });
+}
+
+
+
 // with open AI
+
 // import formidable from "formidable";
 // import fs from "fs";
 // import path from "path";
@@ -112,116 +218,4 @@
 //     }
 //   });
 // }
-
-
-// with rule based extraction
-
-import fs from "fs";
-import path from "path";
-import Tesseract from "tesseract.js";
-import formidable from "formidable";
-import { fromPath } from "pdf2pic";
-
-export const config = { api: { bodyParser: false } };
-
-// Tmp folder
-const TMP_DIR = path.resolve("./tmp");
-if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
-
-// Allergens / Nutrients
-const ALLERGENS = ["Gluten","Egg","Crustaceans","Fish","Peanut","Soy","Milk","Tree nuts","Celery","Mustard"];
-const NUTRIENTS = ["Energy","Fat","Carbohydrate","Sugar","Protein","Sodium"];
-
-// Rule-based extraction
-function extractInfo(text) {
-  const result = { allergens: [], nutrients: {} };
-  const lowerText = text.toLowerCase();
-
-  ALLERGENS.forEach(a => {
-    if (lowerText.includes(a.toLowerCase())) result.allergens.push(a);
-  });
-
-  NUTRIENTS.forEach(n => {
-    const match = text.match(new RegExp(`${n}:\\s*([\\d.,]+)`, "i"));
-    if (match) result.nutrients[n] = match[1];
-  });
-
-  return result;
-}
-
-export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: "Method Not Allowed" });
-  }
-
-  const form = new formidable.IncomingForm({ keepExtensions: true, uploadDir: TMP_DIR });
-
-  form.parse(req, async (err, fields, files) => {
-    if (err) return res.status(500).json({ error: "Error parsing file", details: err.message });
-
-    const file = files.file;
-    if (!file) return res.status(400).json({ error: "No file uploaded" });
-
-    const filePath = file.filepath || file.path;
-    if (!filePath) return res.status(400).json({ error: "File path not found" });
-
-    let extractedText = "";
-
-    // Step 1: PDF text extraction
-    try {
-      let pdfParse;
-      try {
-        pdfParse = (await import("pdf-parse")).default;
-      } catch (e) {
-        pdfParse = require("pdf-parse");
-      }
-
-      const pdfBuffer = fs.readFileSync(filePath);
-      const data = await pdfParse(pdfBuffer);
-      if (data && data.text && data.text.trim().length > 0) {
-        extractedText = data.text.trim();
-      }
-    } catch (pdfErr) {
-      console.warn("pdf-parse failed, falling back to OCR:", pdfErr.message);
-    }
-
-    // Step 2: OCR if PDF extraction failed
-    if (!extractedText || extractedText.length < 5) {
-      try {
-        const converter = fromPath(filePath, {
-          density: 150,
-          saveFilename: "tmp_page",
-          savePath: TMP_DIR,
-          format: "png",
-          width: 1240,
-          height: 1754,
-        });
-
-        // Try sequential OCR, 1 page at a time
-        let ocrText = "";
-        const MAX_PAGES = 20; // limit to avoid EPIPE
-
-        for (let i = 1; i <= MAX_PAGES; i++) {
-          try {
-            const image = await converter(i);
-            const result = await Tesseract.recognize(path.resolve(image.path), "eng");
-            ocrText += "\n" + result.data.text;
-          } catch (pageErr) {
-            console.warn(`Page ${i} failed OCR:`, pageErr.message);
-            break; // stop on first failure (probably no more pages)
-          }
-        }
-
-        extractedText = ocrText.trim();
-      } catch (ocrErr) {
-        console.error("OCR completely failed:", ocrErr.message);
-      }
-    }
-
-    // Step 3: Extract allergens / nutrients
-    const parsed = extractInfo(extractedText);
-
-    return res.status(200).json(parsed);
-  });
-}
 
